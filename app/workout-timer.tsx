@@ -1,6 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type FocusEvent,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 type WorkoutPhase = "idle" | "countdown" | "round" | "rest" | "paused" | "finished";
 type TimedPhase = "countdown" | "round" | "rest";
@@ -9,6 +19,7 @@ type Theme = "light" | "dark";
 
 interface WorkoutSettings {
   rounds: number;
+  prepareDuration: number;
   roundDuration: number;
   restDuration: number;
   combinationsText: string;
@@ -20,9 +31,18 @@ interface WorkoutSettings {
 
 interface SettingsErrors {
   rounds?: string;
+  prepareDuration?: string;
   roundDuration?: string;
   restDuration?: string;
   combinations?: string;
+}
+
+interface DurationFieldProps {
+  id: string;
+  label: string;
+  value: number;
+  error?: string;
+  onChange: (value: number) => void;
 }
 
 const PRESETS = {
@@ -73,6 +93,7 @@ const PRESETS = {
 
 const DEFAULT_SETTINGS: WorkoutSettings = {
   rounds: 3,
+  prepareDuration: 30,
   roundDuration: 180,
   restDuration: 60,
   combinationsText: PRESETS["Boxing Basics"].join("\n"),
@@ -83,7 +104,6 @@ const DEFAULT_SETTINGS: WorkoutSettings = {
 };
 
 const STORAGE_KEY = "corner-bell-settings-v1";
-const COUNTDOWN_SECONDS = 5;
 
 function parseCombinations(value: string): string[][] {
   return value
@@ -99,14 +119,23 @@ function formatTime(milliseconds: number): string {
     .padStart(2, "0")}`;
 }
 
+function parseDurationDigits(value: string): number | null {
+  const digits = value.replace(/\D/g, "").slice(-4).padStart(4, "0");
+  const seconds = Number(digits.slice(2));
+  if (seconds > 59) return null;
+  return Number(digits.slice(0, 2)) * 60 + seconds;
+}
+
 function validateSettings(settings: WorkoutSettings): SettingsErrors {
   const errors: SettingsErrors = {};
   if (!Number.isInteger(settings.rounds) || settings.rounds < 1)
     errors.rounds = "Enter at least 1 round.";
+  if (!Number.isInteger(settings.prepareDuration) || settings.prepareDuration < 0)
+    errors.prepareDuration = "Enter time as mm:ss.";
   if (!Number.isInteger(settings.roundDuration) || settings.roundDuration < 1)
-    errors.roundDuration = "Enter a whole number of seconds (at least 1).";
+    errors.roundDuration = "Enter time as mm:ss (at least 00:01).";
   if (!Number.isInteger(settings.restDuration) || settings.restDuration < 0)
-    errors.restDuration = "Enter a whole number of seconds (0 or more).";
+    errors.restDuration = "Enter time as mm:ss.";
   if (parseCombinations(settings.combinationsText).length === 0)
     errors.combinations = "Add at least one valid combination.";
   return errors;
@@ -127,6 +156,7 @@ function loadSettings(): WorkoutSettings {
     const value = stored;
     const candidate: WorkoutSettings = {
       rounds: typeof value.rounds === "number" ? value.rounds : DEFAULT_SETTINGS.rounds,
+      prepareDuration: typeof value.prepareDuration === "number" ? value.prepareDuration : DEFAULT_SETTINGS.prepareDuration,
       roundDuration: typeof value.roundDuration === "number" ? value.roundDuration : DEFAULT_SETTINGS.roundDuration,
       restDuration: typeof value.restDuration === "number" ? value.restDuration : DEFAULT_SETTINGS.restDuration,
       combinationsText: typeof value.combinationsText === "string" ? value.combinationsText : DEFAULT_SETTINGS.combinationsText,
@@ -162,6 +192,75 @@ function phaseLabel(phase: WorkoutPhase): string {
 
 function combinationInterval(combination: string[]): number {
   return (combination.length + 1) * 1000;
+}
+
+function selectZeroValue(event: FocusEvent<HTMLInputElement>) {
+  if (event.currentTarget.value === "0") event.currentTarget.select();
+}
+
+function DurationField({ id, label, value, error, onChange }: DurationFieldProps) {
+  const formattedValue = formatTime(value * 1000);
+
+  function commitDigits(digits: string, input: HTMLInputElement) {
+    const nextValue = parseDurationDigits(digits);
+    if (nextValue === null) {
+      input.value = formattedValue;
+      return;
+    }
+    const nextFormattedValue = formatTime(nextValue * 1000);
+    input.value = nextFormattedValue;
+    input.setSelectionRange(nextFormattedValue.length, nextFormattedValue.length);
+    onChange(nextValue);
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const isFullySelected = input.selectionStart === 0 && input.selectionEnd === input.value.length;
+    const currentDigits = isFullySelected ? "" : formattedValue.replace(":", "");
+
+    if (/^\d$/.test(event.key)) {
+      event.preventDefault();
+      commitDigits(currentDigits + event.key, input);
+      return;
+    }
+    if (event.key === "Backspace" || event.key === "Delete") {
+      event.preventDefault();
+      commitDigits(isFullySelected ? "" : currentDigits.slice(0, -1), input);
+      return;
+    }
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey)
+      event.preventDefault();
+  }
+
+  function handleChange(event: ChangeEvent<HTMLInputElement>) {
+    commitDigits(event.currentTarget.value, event.currentTarget);
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
+    event.preventDefault();
+    const input = event.currentTarget;
+    const pastedDigits = event.clipboardData.getData("text").replace(/\D/g, "");
+    if (!pastedDigits) {
+      input.value = formattedValue;
+      return;
+    }
+    const isFullySelected = input.selectionStart === 0 && input.selectionEnd === input.value.length;
+    const currentDigits = isFullySelected ? "" : formattedValue.replace(":", "");
+    commitDigits(currentDigits + pastedDigits, input);
+  }
+
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <input id={id} className="duration-input" type="text" inputMode="numeric"
+        pattern="[0-9]{2}:[0-5][0-9]"
+        value={formattedValue} onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={handleKeyDown} onChange={handleChange} onPaste={handlePaste}
+        aria-describedby={error ? `${id}-error` : undefined}
+        aria-invalid={Boolean(error)} />
+      {error ? <p className="field-error" id={`${id}-error`} role="alert">{error}</p> : null}
+    </div>
+  );
 }
 
 export function WorkoutTimer() {
@@ -359,10 +458,14 @@ export function WorkoutTimer() {
     currentRoundRef.current = 1;
     setCurrentRound(1);
     setCurrentCombination([]);
+    if (settingsRef.current.prepareDuration === 0) {
+      beginRound(1);
+      return;
+    }
     setPhase("countdown");
-    deadlineRef.current = performance.now() + COUNTDOWN_SECONDS * 1000;
+    deadlineRef.current = performance.now() + settingsRef.current.prepareDuration * 1000;
     comboDeadlineRef.current = Number.POSITIVE_INFINITY;
-    setRemainingMs(COUNTDOWN_SECONDS * 1000);
+    setRemainingMs(settingsRef.current.prepareDuration * 1000);
   }
 
   function pauseWorkout() {
@@ -465,7 +568,7 @@ export function WorkoutTimer() {
   }, [cancelSpeech]);
 
   const timerValue = phase === "idle" ? settings.roundDuration * 1000 : remainingMs;
-  const phaseDuration = phase === "countdown" ? COUNTDOWN_SECONDS
+  const phaseDuration = phase === "countdown" ? settings.prepareDuration
     : phase === "rest" ? settings.restDuration : settings.roundDuration;
   const combinationCopy = currentCombination.length > 0
     ? currentCombination.join("  ·  ")
@@ -552,21 +655,19 @@ export function WorkoutTimer() {
                 <div className="field">
                   <label htmlFor="rounds">Number of rounds</label>
                   <input id="rounds" type="number" min="1" step="1" inputMode="numeric" value={draft.rounds}
+                    onFocus={selectZeroValue}
                     onChange={(event) => setDraft((current) => ({ ...current, rounds: Number(event.target.value) }))} aria-invalid={Boolean(errors.rounds)} />
                   {errors.rounds ? <p className="field-error" role="alert">{errors.rounds}</p> : null}
                 </div>
-                <div className="field">
-                  <label htmlFor="round-duration">Round duration (seconds)</label>
-                  <input id="round-duration" type="number" min="1" step="1" inputMode="numeric" value={draft.roundDuration}
-                    onChange={(event) => setDraft((current) => ({ ...current, roundDuration: Number(event.target.value) }))} aria-invalid={Boolean(errors.roundDuration)} />
-                  {errors.roundDuration ? <p className="field-error" role="alert">{errors.roundDuration}</p> : null}
-                </div>
-                <div className="field">
-                  <label htmlFor="rest-duration">Rest duration (seconds)</label>
-                  <input id="rest-duration" type="number" min="0" step="1" inputMode="numeric" value={draft.restDuration}
-                    onChange={(event) => setDraft((current) => ({ ...current, restDuration: Number(event.target.value) }))} aria-invalid={Boolean(errors.restDuration)} />
-                  {errors.restDuration ? <p className="field-error" role="alert">{errors.restDuration}</p> : null}
-                </div>
+                <DurationField id="prepare-duration" label="Prepare time" value={draft.prepareDuration}
+                  error={errors.prepareDuration}
+                  onChange={(value) => setDraft((current) => ({ ...current, prepareDuration: value }))} />
+                <DurationField id="round-duration" label="Round duration" value={draft.roundDuration}
+                  error={errors.roundDuration}
+                  onChange={(value) => setDraft((current) => ({ ...current, roundDuration: value }))} />
+                <DurationField id="rest-duration" label="Rest duration" value={draft.restDuration}
+                  error={errors.restDuration}
+                  onChange={(value) => setDraft((current) => ({ ...current, restDuration: value }))} />
               </div>
               <label className="switch-row" htmlFor="randomize">
                 <span><strong>Randomize combinations</strong><small>Avoids immediate repeats when possible.</small></span>
