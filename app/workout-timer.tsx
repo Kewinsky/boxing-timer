@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Settings as SettingsIcon } from "lucide-react";
 
 type WorkoutPhase = "idle" | "countdown" | "round" | "rest" | "paused" | "finished";
 type TimedPhase = "countdown" | "round" | "rest";
@@ -501,7 +500,7 @@ export function WorkoutTimer() {
             {phase === "idle" ? <button className="button button-primary" type="button" onClick={startWorkout}>Start Workout</button> : null}
             {phase === "idle" ? (
               <button className="button button-secondary" type="button" onClick={openSettings}>
-                <SettingsIcon aria-hidden="true" />Configure Workout
+                Configure Workout
               </button>
             ) : null}
             {isRunning ? <button className="button button-primary" type="button" onClick={pauseWorkout}>Pause</button> : null}
